@@ -203,6 +203,27 @@
 	{
 		"en"		"Time Difference"
 	}
+	"HudCompareStyle"
+	{
+		"en"		"Compare against"
+	}
+	"HudCompareStyleMenuTitle"
+	{
+		"en"		"Compare time difference against:"
+	}
+	"HudCompareStyleAuto"
+	{
+		"en"		"Your current style"
+	}
+	"HudCompareStyleNoReplay"
+	{
+		"en"		"no replay"
+	}
+	"HudCompareStyleNotice"
+	{
+		"#format"	"{1:s},{2:s},{3:s},{4:s},{5:s}"
+		"en"		"Comparing your time against {1}{2}{3}. Type {4}!cpr{5} to change it."
+	}
 	"HudTopLeftRankText"
 	{
 		"en"		"Top left Rank"

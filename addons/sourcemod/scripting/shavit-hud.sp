@@ -83,8 +83,10 @@ int gI_Styles = 0;
 
 Handle gH_HUDCookie = null;
 Handle gH_HUDCookieMain = null;
+Handle gH_CompareCookie = null;
 int gI_HUDSettings[MAXPLAYERS+1];
 int gI_HUD2Settings[MAXPLAYERS+1];
+int gI_CompareStyle[MAXPLAYERS+1]; // -1 follows the player's own style
 int gI_LastScrollCount[MAXPLAYERS+1];
 int gI_ScrollCount[MAXPLAYERS+1];
 int gI_Buttons[MAXPLAYERS+1];
@@ -258,6 +260,8 @@ public void OnPluginStart()
 
 	RegConsoleCmd("sm_zonehud", Command_ZoneHUD, "Toggles zone HUD.");
 
+	RegConsoleCmd("sm_cpr", Command_Compare, "Opens the time difference comparison menu.");
+
 	RegConsoleCmd("sm_hideweapon", Command_HideWeapon, "Toggles weapon hiding.");
 	RegConsoleCmd("sm_hideweap", Command_HideWeapon, "Toggles weapon hiding. (alias for sm_hideweapon)");
 	RegConsoleCmd("sm_hideweps", Command_HideWeapon, "Toggles weapon hiding. (alias for sm_hideweapon)");
@@ -274,6 +278,7 @@ public void OnPluginStart()
 	// cookies
 	gH_HUDCookie = RegClientCookie("shavit_hud_setting", "HUD settings", CookieAccess_Protected);
 	gH_HUDCookieMain = RegClientCookie("shavit_hud_settingmain", "HUD settings for hint text.", CookieAccess_Protected);
+	gH_CompareCookie = RegClientCookie("shavit_hud_comparestyle", "Style the time difference compares against.", CookieAccess_Protected);
 
 	HookEvent("player_spawn", Player_Spawn);
 
@@ -410,6 +415,11 @@ public void OnClientPutInServer(int client)
 		{
 			CreateTimer(5.0, Timer_QueryWindowsCvar, GetClientSerial(client), TIMER_FLAG_NO_MAPCHANGE);
 		}
+
+		if(AreClientCookiesCached(client))
+		{
+			PrintCompareNotice(client);
+		}
 	}
 }
 
@@ -478,6 +488,11 @@ public void OnClientCookiesCached(int client)
 	}
 
 	gI_HUD2Settings[client] = StringToInt(sHUDSettings);
+
+	GetClientCookie(client, gH_CompareCookie, sHUDSettings, sizeof(sHUDSettings));
+	gI_CompareStyle[client] = (strlen(sHUDSettings) == 0) ? -1 : StringToInt(sHUDSettings);
+	ApplyCompareStyle(client);
+	PrintCompareNotice(client);
 
 	if (gEV_Type != Engine_TF2 && IsValidClient(client, true) && GetClientTeam(client) > 1)
 	{
@@ -661,6 +676,16 @@ public Action Command_HUD(int client, int args)
 	return ShowHUDMenu(client, 0);
 }
 
+public Action Command_Compare(int client, int args)
+{
+	if(IsValidClient(client) && gB_ReplayPlayback)
+	{
+		ShowCompareMenu(client);
+	}
+
+	return Plugin_Handled;
+}
+
 Action ShowHUDMenu(int client, int item)
 {
 	if(!IsValidClient(client))
@@ -756,6 +781,9 @@ Action ShowHUDMenu(int client, int item)
 		FormatEx(sInfo, 16, "@%d", HUD2_TIMEDIFFERENCE);
 		FormatEx(sHudItem, 64, "%T", "HudTimeDifference", client);
 		menu.AddItem(sInfo, sHudItem);
+
+		FormatEx(sHudItem, 64, "%T", "HudCompareStyle", client);
+		menu.AddItem("$", sHudItem);
 	}
 
 	FormatEx(sInfo, 16, "@%d", HUD2_SPEED);
@@ -840,12 +868,174 @@ Action ShowHUDMenu(int client, int item)
 	return Plugin_Handled;
 }
 
+void GetCompareStyleName(int client, char[] buffer, int maxlen)
+{
+	int style = gI_CompareStyle[client];
+
+	if(!(0 <= style < gI_Styles))
+	{
+		FormatEx(buffer, maxlen, "%T", "HudCompareStyleAuto", client);
+	}
+	else if(Shavit_GetReplayFrameCount(style, Shavit_GetClientTrack(client)) == 0)
+	{
+		FormatEx(buffer, maxlen, "%s (%T)", gS_StyleStrings[style].sStyleName, "HudCompareStyleNoReplay", client);
+	}
+	else
+	{
+		strcopy(buffer, maxlen, gS_StyleStrings[style].sStyleName);
+	}
+}
+
+// the pick is sticky across maps, so say so on join instead of letting someone wonder why their splits look wrong.
+// nothing to warn about when it already matches the style they're playing.
+void PrintCompareNotice(int client)
+{
+	if(!gB_ReplayPlayback || !(0 <= gI_CompareStyle[client] < gI_Styles) || gI_CompareStyle[client] == Shavit_GetBhopStyle(client))
+	{
+		return;
+	}
+
+	char sStyle[48];
+	GetCompareStyleName(client, sStyle, sizeof(sStyle));
+
+	Shavit_PrintToChat(client, "%T", "HudCompareStyleNotice", client,
+		gS_ChatStrings.sVariable, sStyle, gS_ChatStrings.sText, gS_ChatStrings.sVariable2, gS_ChatStrings.sText);
+}
+
+bool CanCompareToStyle(int style, int track)
+{
+	return !HiddenCompareStyle(style) && Shavit_GetReplayFrameCount(style, track) > 0;
+}
+
+bool HiddenCompareStyle(int style)
+{
+	return Shavit_GetStyleSettingInt(style, "enabled") == -1 || Shavit_GetStyleSettingBool(style, "inaccessible");
+}
+
+void SetCompareStyle(int client, int style)
+{
+	char sCookie[8];
+	IntToString(style, sCookie, sizeof(sCookie));
+	SetClientCookie(client, gH_CompareCookie, sCookie);
+
+	gI_CompareStyle[client] = style;
+	ApplyCompareStyle(client);
+}
+
+void ApplyCompareStyle(int client)
+{
+	if(!gB_ReplayPlayback)
+	{
+		return;
+	}
+
+	int style = gI_CompareStyle[client];
+
+	// keep the pick across maps, just don't point the timer at a replay that isn't there
+	if(!(0 <= style < gI_Styles) || !CanCompareToStyle(style, Shavit_GetClientTrack(client)))
+	{
+		style = -1;
+	}
+
+	Shavit_SetClosestReplayStyle(client, style);
+}
+
+void CycleCompareStyle(int client)
+{
+	int[] styles = new int[gI_Styles];
+	Shavit_GetOrderedStyles(styles, gI_Styles);
+
+	int track = Shavit_GetClientTrack(client);
+	int start = -1;
+
+	for(int i = 0; i < gI_Styles; i++)
+	{
+		if(styles[i] == gI_CompareStyle[client])
+		{
+			start = i;
+			break;
+		}
+	}
+
+	// one past the end wraps back around to "your current style"
+	for(int i = start + 1; i <= gI_Styles; i++)
+	{
+		int style = (i == gI_Styles) ? -1 : styles[i];
+
+		if(style == -1 || CanCompareToStyle(style, track))
+		{
+			SetCompareStyle(client, style);
+			return;
+		}
+	}
+}
+
+void ShowCompareMenu(int client)
+{
+	Menu menu = new Menu(MenuHandler_CompareStyle);
+	menu.SetTitle("%T", "HudCompareStyleMenuTitle", client);
+
+	char sInfo[8];
+	char sItem[64];
+
+	FormatEx(sItem, 64, "[%s] %T", (gI_CompareStyle[client] == -1)? "＋":"－", "HudCompareStyleAuto", client);
+	menu.AddItem("-1", sItem);
+
+	int track = Shavit_GetClientTrack(client);
+
+	int[] styles = new int[gI_Styles];
+	Shavit_GetOrderedStyles(styles, gI_Styles);
+
+	for(int i = 0; i < gI_Styles; i++)
+	{
+		int style = styles[i];
+
+		if(HiddenCompareStyle(style))
+		{
+			continue;
+		}
+
+		IntToString(style, sInfo, 8);
+		FormatEx(sItem, 64, "[%s] %s", (gI_CompareStyle[client] == style)? "＋":"－", gS_StyleStrings[style].sStyleName);
+		menu.AddItem(sInfo, sItem, (Shavit_GetReplayFrameCount(style, track) > 0)? ITEMDRAW_DEFAULT:ITEMDRAW_DISABLED);
+	}
+
+	menu.ExitButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
+}
+
+public int MenuHandler_CompareStyle(Menu menu, MenuAction action, int param1, int param2)
+{
+	if(action == MenuAction_Select)
+	{
+		char sInfo[8];
+		menu.GetItem(param2, sInfo, 8);
+
+		SetCompareStyle(param1, StringToInt(sInfo));
+		ShowCompareMenu(param1);
+	}
+	else if(action == MenuAction_End)
+	{
+		delete menu;
+	}
+
+	return 0;
+}
+
 public int MenuHandler_HUD(Menu menu, MenuAction action, int param1, int param2)
 {
 	if(action == MenuAction_Select)
 	{
 		char sCookie[16];
 		menu.GetItem(param2, sCookie, 16);
+
+		if(sCookie[0] == '$')
+		{
+			CycleCompareStyle(param1);
+			ShowHUDMenu(param1, GetMenuSelectionPosition());
+
+			return 0;
+		}
 
 		int type = (sCookie[0] == '!') ? 1 : (sCookie[0] == '@' ? 2 : 3);
 		ReplaceString(sCookie, 16, "!", "");
@@ -900,6 +1090,15 @@ public int MenuHandler_HUD(Menu menu, MenuAction action, int param1, int param2)
 		char sDisplay[64];
 		int style = 0;
 		menu.GetItem(param2, sInfo, 16, style, sDisplay, 64);
+
+		if(sInfo[0] == '$')
+		{
+			char sTarget[48];
+			GetCompareStyleName(param1, sTarget, sizeof(sTarget));
+			Format(sDisplay, 64, "%s: %s", sDisplay, sTarget);
+
+			return RedrawMenuItem(sDisplay);
+		}
 
 		int type = (sInfo[0] == '!') ? 1 : (sInfo[0] == '@' ? 2 : 3);
 		ReplaceString(sInfo, 16, "!", "");
@@ -2479,7 +2678,19 @@ public void Shavit_OnTrackChanged(int client, int oldtrack, int newtrack)
 {
 	if (IsClientInGame(client))
 	{
+		ApplyCompareStyle(client);
 		UpdateTopLeftHUD(client, false);
+	}
+}
+
+public void Shavit_OnReplaysLoaded()
+{
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(IsValidClient(i) && !IsFakeClient(i) && AreClientCookiesCached(i))
+		{
+			ApplyCompareStyle(i);
+		}
 	}
 }
 
