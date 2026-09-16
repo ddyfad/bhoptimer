@@ -284,8 +284,21 @@ void RequestCallback_Ripext(HTTPResponse response, DataPack pack, const char[] e
 {
 	if (response.Status != HTTPStatus_OK || response.Data == null)
 	{
-		LogError("HTTP API request failed");
+		pack.Reset();
+		char mapname[PLATFORM_MAX_PATH];
+		pack.ReadString(mapname, sizeof(mapname));
 		delete pack;
+
+		// 404 just means nobody has zoned the map yet, which is not a fault.
+		if (response.Status == HTTPStatus_NotFound)
+		{
+			LogMessage("No json zones for '%s'.", mapname);
+		}
+		else
+		{
+			LogError("HTTP API failed for '%s'. statuscode=%d", mapname, response.Status);
+		}
+
 		return;
 	}
 
@@ -300,7 +313,16 @@ public void RequestCompletedCallback_Steamworks(Handle request, bool bFailure, b
 		char mapname[PLATFORM_MAX_PATH];
 		pack.ReadString(mapname, sizeof(mapname));
 		delete pack;
-		LogError("HTTP API failed for '%s'. statuscode=%d", mapname, eStatusCode);
+
+		if (eStatusCode == k_EHTTPStatusCode404NotFound)
+		{
+			LogMessage("No json zones for '%s'.", mapname);
+		}
+		else
+		{
+			LogError("HTTP API failed for '%s'. statuscode=%d", mapname, eStatusCode);
+		}
+
 		return;
 	}
 
