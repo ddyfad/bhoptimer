@@ -170,6 +170,7 @@ float gF_LastInteraction[MAXPLAYERS+1];
 
 float gF_TimeDifference[MAXPLAYERS+1];
 int   gI_TimeDifferenceStyle[MAXPLAYERS+1];
+bool  gB_ClosestReplayOverride[MAXPLAYERS+1]; // set when the player picked a comparison style themselves
 float gF_TimeDifferenceLength[MAXPLAYERS+1]; // i love adding variables...
 float gF_VelocityDifference2D[MAXPLAYERS+1];
 float gF_VelocityDifference3D[MAXPLAYERS+1];
@@ -1493,7 +1494,12 @@ public int Native_GetClosestReplayStyle(Handle plugin, int numParams)
 
 public int Native_SetClosestReplayStyle(Handle plugin, int numParams)
 {
-	gI_TimeDifferenceStyle[GetNativeCell(1)] = GetNativeCell(2);
+	int client = GetNativeCell(1);
+	int style = GetNativeCell(2);
+
+	gB_ClosestReplayOverride[client] = (style != -1);
+	gI_TimeDifferenceStyle[client] = (style == -1) ? Shavit_GetBhopStyle(client) : style;
+
 	return 1;
 }
 
@@ -1758,7 +1764,10 @@ public void Shavit_OnChatConfigLoaded()
 
 public void Shavit_OnStyleChanged(int client, int oldstyle, int newstyle, int track, bool manual)
 {
-	gI_TimeDifferenceStyle[client] = newstyle;
+	if (!gB_ClosestReplayOverride[client])
+	{
+		gI_TimeDifferenceStyle[client] = newstyle;
+	}
 }
 
 public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldtime, float perfs, float avgvel, float maxvel, int timestamp, bool isbestreplay, bool istoolong, ArrayList paths, ArrayList frames, int preframes, int postframes, const char[] name)
@@ -2444,6 +2453,8 @@ public void OnClientDisconnect(int client)
 
 	if(!IsFakeClient(client))
 	{
+		gB_ClosestReplayOverride[client] = false;
+
 		if (gA_BotInfo[client].iEnt > 0)
 		{
 			int index = GetBotInfoIndex(gA_BotInfo[client].iEnt);
