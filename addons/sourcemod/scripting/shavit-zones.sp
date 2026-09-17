@@ -5336,6 +5336,11 @@ void SetZoneMinsMaxs(int zone)
 		mins[i] = -maxs[i];
 	}
 
+	if (offsets[1] == 0.0 && gA_ZoneCache[zone].iType == Zone_Start && maxs[2] > 0.05)
+	{
+		maxs[2] -= 0.05;
+	}
+
 	SetEntPropVector(gA_ZoneCache[zone].iEntity, Prop_Send, "m_vecMins", mins);
 	SetEntPropVector(gA_ZoneCache[zone].iEntity, Prop_Send, "m_vecMaxs", maxs);
 }
