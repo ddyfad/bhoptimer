@@ -2504,6 +2504,18 @@ bool CanStartTimer(int client, int track, bool skipGroundCheck)
 		return false;
 	}
 
+	// stuck in a wall (e.g. after noclip) still touches the start trigger through it
+	float origin[3], mins[3], maxs[3];
+	GetClientAbsOrigin(client, origin);
+	GetClientMins(client, mins);
+	GetClientMaxs(client, maxs);
+	TR_TraceHullFilter(origin, origin, mins, maxs, MASK_PLAYERSOLID_BRUSHONLY, TraceFilter_NoPlayers, client);
+
+	if (TR_DidHit())
+	{
+		return false;
+	}
+
 	int style = gA_Timers[client].bsStyle;
 
 	int prespeed = GetStyleSettingInt(style, "prespeed");
@@ -3996,4 +4008,9 @@ void UpdateStyleSettings(int client)
 	{
 		UpdateAiraccelerate(client, GetStyleSettingFloat(gA_Timers[client].bsStyle, "airaccelerate"));
 	}
+}
+
+public bool TraceFilter_NoPlayers(int entity, int mask, any data)
+{
+	return entity > MaxClients;
 }
