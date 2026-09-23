@@ -2150,6 +2150,117 @@ bool MapValidOrYell(int client, const char[] map)
 	return true;
 }
 
+void OpenMapsRootMenu(int client)
+{
+	Menu menu = new Menu(MapsRootMenuHandler);
+	menu.SetTitle("%T\n ", "Choose Map", client);
+
+	menu.AddItem("list", "Map list");
+	menu.AddItem("random", "Random");
+
+	menu.Pagination = MENU_NO_PAGINATION;
+	menu.ExitButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
+}
+
+public int MapsRootMenuHandler(Menu menu, MenuAction action, int param1, int param2)
+{
+	if (action == MenuAction_Select)
+	{
+		char option[16];
+		menu.GetItem(param2, option, sizeof(option));
+
+		if (StrEqual(option, "random"))
+		{
+			OpenMapsRandomMenu(param1);
+		}
+		else
+		{
+			BaseCommands_Command_Map_Menu(param1, 0);
+		}
+	}
+	else if (action == MenuAction_End)
+	{
+		delete menu;
+	}
+
+	return 0;
+}
+
+void OpenMapsRandomMenu(int client)
+{
+	Menu menu = new Menu(MapsRandomMenuHandler);
+	menu.SetTitle("%T\nRandom\n ", "Choose Map", client);
+
+	StringMap tiersMap = null;
+	if (gB_Rankings) tiersMap = Shavit_GetMapTiers();
+
+	ArrayList pool = g_aMapList.Clone();
+	RemoveString(pool, g_cMapName);
+
+	for(int i = 0; i < 7 && pool.Length > 0; i++)
+	{
+		int idx = GetRandomInt(0, pool.Length - 1);
+
+		char entry[PLATFORM_MAX_PATH];
+		pool.GetString(idx, entry, sizeof(entry));
+		pool.Erase(idx);
+
+		char mapdisplay[PLATFORM_MAX_PATH];
+		LessStupidGetMapDisplayName(entry, mapdisplay, sizeof(mapdisplay));
+
+		if (tiersMap)
+		{
+			int tier = 0;
+			tiersMap.GetValue(mapdisplay, tier);
+			Format(mapdisplay, sizeof(mapdisplay), "%s | T%i", mapdisplay, tier);
+		}
+
+		menu.AddItem(entry, mapdisplay);
+	}
+
+	delete pool;
+	delete tiersMap;
+
+	menu.AddItem("randomize", "Randomize");
+	menu.AddItem("back", "Back");
+
+	menu.Pagination = MENU_NO_PAGINATION;
+	menu.ExitButton = true;
+	menu.Display(client, MENU_TIME_FOREVER);
+}
+
+public int MapsRandomMenuHandler(Menu menu, MenuAction action, int param1, int param2)
+{
+	if (action == MenuAction_Select)
+	{
+		if (param2 == menu.ItemCount - 2)
+		{
+			OpenMapsRandomMenu(param1);
+		}
+		else if (param2 == menu.ItemCount - 1)
+		{
+			OpenMapsRootMenu(param1);
+		}
+		else
+		{
+			char map[PLATFORM_MAX_PATH];
+			menu.GetItem(param2, map, sizeof(map));
+
+			ShowActivity2(param1, g_cPrefix, "%t", "Changing map", map);
+			LogAction(param1, -1, "\"%L\" changed map to \"%s\"", param1, map);
+
+			StartMapChange(MapChangeDelay(), map, "sm_map (MapsRandomMenuHandler)");
+		}
+	}
+	else if (action == MenuAction_End)
+	{
+		delete menu;
+	}
+
+	return 0;
+}
+
 public Action BaseCommands_Command_Map_Menu(int client, int args)
 {
 	char map[PLATFORM_MAX_PATH];
@@ -2327,6 +2438,10 @@ public Action Command_MapButFaster(int client, const char[] command, int args)
 		}
 
 		BaseCommands_Command_Map(client, args);
+	}
+	else if (args < 1)
+	{
+		OpenMapsRootMenu(client);
 	}
 	else
 	{
