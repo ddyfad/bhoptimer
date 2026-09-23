@@ -925,7 +925,11 @@ public void OpenStatsMenu_Mapchooser_Callback(Database db, DBResultSet results, 
 
 	data.WriteCell(maps_and_completions[0][0], true);
 	data.WriteCell(maps_and_completions[0][1], true);
-	data.WriteCell(maps_and_completions[1][0], true);
+	// Main track total comes from the server's map list, not from mapzones. Zones
+	// loaded from json never appear in mapzones, so counting that table gives a
+	// denominator smaller than the number of maps people can actually finish, and
+	// anyone past it sits at 100% forever.
+	data.WriteCell(mapchooser_maps.Size, true);
 	data.WriteCell(maps_and_completions[1][1], true);
 	data.WriteCell(maps_and_completions[2][0], true);
 	data.WriteCell(maps_and_completions[2][1], true);
