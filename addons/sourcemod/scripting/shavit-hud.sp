@@ -2009,7 +2009,7 @@ void UpdateMainHUD(int client)
 	Call_PushCell(target);
 	Call_PushStringEx(sBuffer, sizeof(sBuffer), SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
 	Call_PushCell(sizeof(sBuffer));
-	Call_PushArray(huddata, sizeof(huddata));
+	Call_PushArrayEx(huddata, sizeof(huddata), SM_PARAM_COPYBACK);
 	Call_Finish(preresult);
 
 	if (preresult == Plugin_Handled || preresult == Plugin_Stop)
