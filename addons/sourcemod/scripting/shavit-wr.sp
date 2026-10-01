@@ -30,6 +30,7 @@
 #undef REQUIRE_PLUGIN
 #include <shavit/rankings>
 #include <shavit/zones>
+#include <shavit/replay-playback>
 #include <adminmenu>
 
 #pragma newdecls required
@@ -113,6 +114,8 @@ float gA_StageWR[STYLE_LIMIT][TRACKS_SIZE][MAX_STAGES]; // WR run's stage times
 //stagetimewrcp_t gA_StageWRCP[STYLE_LIMIT][TRACKS_SIZE];
 ArrayList gA_StagePB[MAXPLAYERS+1][STYLE_LIMIT][TRACKS_SIZE]; // player's best WRCP times or something
 float gA_StageTimes[MAXPLAYERS+1][MAX_STAGES]; // player's current run stage times
+float gA_StageReplay[STYLE_LIMIT][TRACKS_SIZE][MAX_STAGES]; // when the WR replay first touched each stage zone
+float gF_StageReplayKey[STYLE_LIMIT][TRACKS_SIZE]; // replay length plus stage zone bounds that gA_StageReplay was built from
 
 Menu gH_PBMenu[MAXPLAYERS+1];
 int gI_PBMenuPos[MAXPLAYERS+1];
@@ -3154,10 +3157,17 @@ public void SQL_UpdateLeaderboards_Callback(Database db, DBResultSet results, co
 
 public Action Shavit_OnStageMessage(int client, int stageNumber, char[] message, int maxlen)
 {
-	int style = Shavit_GetBhopStyle(client);
+	// compare against the style picked in !cpr, which is the player's own style unless they changed it
+	int style = LibraryExists("shavit-replay-playback") ? Shavit_GetClosestReplayStyle(client) : Shavit_GetBhopStyle(client);
 	int track = Shavit_GetClientTrack(client);
 	float stageTime = Shavit_GetClientTime(client);
 	float stageTimeWR = gA_StageWR[style][track][stageNumber];
+
+	// Stage zones added after the WR was set have no stored time, so take it from the replay instead.
+	if (stageTimeWR == 0.0)
+	{
+		stageTimeWR = GetReplayStageTime(style, track, stageNumber);
+	}
 
 	gA_StageTimes[client][stageNumber] = stageTime;
 
@@ -3182,6 +3192,100 @@ public Action Shavit_OnStageMessage(int client, int stageNumber, char[] message,
 	Shavit_PrintToChat(client, "%T", "WRStageTime", client, gS_ChatStrings.sText, gS_ChatStrings.sVariable, stageNumber, gS_ChatStrings.sText, gS_ChatStrings.sVariable, sStageTime, gS_ChatStrings.sText, (fDifference <= 0.0) ? gS_ChatStrings.sVariable : gS_ChatStrings.sWarning, sDifference, gS_ChatStrings.sText);
 
 	return Plugin_Handled;
+}
+
+float GetReplayStageTime(int style, int track, int stage)
+{
+	if (stage < 1 || stage >= MAX_STAGES || !LibraryExists("shavit-replay-playback"))
+	{
+		return 0.0;
+	}
+
+	int frameCount = Shavit_GetReplayFrameCount(style, track);
+	float length = Shavit_GetReplayLength(style, track);
+
+	if (frameCount <= 0 || length <= 0.0)
+	{
+		return 0.0;
+	}
+
+	ArrayList boxes = new ArrayList(7);
+	float key = length;
+	int zoneCount = Shavit_GetZoneCount();
+
+	for (int i = 0; i < zoneCount; i++)
+	{
+		zone_cache_t zone;
+		Shavit_GetZone(i, zone);
+
+		if (zone.iType != Zone_Stage || zone.iTrack != track || zone.iData < 1 || zone.iData >= MAX_STAGES || zone.iEntity <= 0 || !IsValidEntity(zone.iEntity))
+		{
+			continue;
+		}
+
+		float origin[3], mins[3], maxs[3];
+		GetEntPropVector(zone.iEntity, Prop_Data, "m_vecAbsOrigin", origin);
+		GetEntPropVector(zone.iEntity, Prop_Send, "m_vecMins", mins);
+		GetEntPropVector(zone.iEntity, Prop_Send, "m_vecMaxs", maxs);
+
+		float box[7];
+		box[0] = float(zone.iData);
+
+		for (int j = 0; j < 3; j++)
+		{
+			box[1 + j] = origin[j] + mins[j];
+			box[4 + j] = origin[j] + maxs[j];
+			key += (box[1 + j] * (j + 1) + box[4 + j] * (j + 4)) * box[0];
+		}
+
+		boxes.PushArray(box);
+	}
+
+	if (key != gF_StageReplayKey[style][track])
+	{
+		gF_StageReplayKey[style][track] = key;
+
+		float times[MAX_STAGES];
+		ArrayList frames = Shavit_GetReplayFrames(style, track, true);
+
+		if (frames != null)
+		{
+			int preframes = Shavit_GetReplayPreFrames(style, track);
+			float frametime = length / float(frameCount);
+			int remaining = boxes.Length;
+
+			for (int i = preframes; i < frames.Length && remaining > 0; i++)
+			{
+				float pos[3];
+				frames.GetArray(i, pos, 3);
+
+				for (int j = 0; j < boxes.Length; j++)
+				{
+					float box[7];
+					boxes.GetArray(j, box);
+					int num = RoundToFloor(box[0]);
+
+					// player hull is 32x32x72 from the feet
+					if (times[num] == 0.0
+						&& pos[0] + 16.0 > box[1] && pos[0] - 16.0 < box[4]
+						&& pos[1] + 16.0 > box[2] && pos[1] - 16.0 < box[5]
+						&& pos[2] + 72.0 > box[3] && pos[2] < box[6])
+					{
+						times[num] = (i - preframes) * frametime;
+						remaining--;
+					}
+				}
+			}
+
+			delete frames;
+		}
+
+		gA_StageReplay[style][track] = times;
+	}
+
+	delete boxes;
+
+	return gA_StageReplay[style][track][stage];
 }
 
 public Action Shavit_OnStart(int client, int track)
