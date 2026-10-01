@@ -114,6 +114,7 @@ int gI_HighestStage[TRACKS_SIZE];
 float gF_CustomSpawn[TRACKS_SIZE][3];
 int gI_EntityZone[2048] = {-1, ...};
 int gI_LastStage[MAXPLAYERS+1];
+int gI_StageEnterTick[MAXPLAYERS+1];
 
 char gS_BeamSprite[PLATFORM_MAX_PATH];
 char gS_BeamSpriteIgnoreZ[PLATFORM_MAX_PATH];
@@ -296,6 +297,9 @@ public void OnPluginStart()
 
 	RegConsoleCmd("sm_drawallzones", Command_DrawAllZones, "Toggles drawing all zones.");
 	RegConsoleCmd("sm_drawzones", Command_DrawAllZones, "Toggles drawing all zones.");
+	RegConsoleCmd("sm_togglestages", Command_ToggleStageZones, "Toggles drawing stage zones.");
+	RegConsoleCmd("sm_hidestages", Command_ToggleStageZones, "Toggles drawing stage zones.");
+	RegConsoleCmd("sm_hidestage", Command_ToggleStageZones, "Toggles drawing stage zones.");
 	gH_DrawAllZonesCookie = new Cookie("shavit_drawallzones", "Draw all zones cookie", CookieAccess_Protected);
 
 	RegConsoleCmd("sm_czone", Command_CustomZones, "Customize start and end zone for each track");
@@ -2109,6 +2113,26 @@ public Action Command_DrawAllZones(int client, int args)
 	return Plugin_Handled;
 }
 
+public Action Command_ToggleStageZones(int client, int args)
+{
+	if (client == 0)
+	{
+		return Plugin_Handled;
+	}
+
+	bool hide = gI_ZoneDisplayType[client][Zone_Stage][Track_Main] != ZoneDisplay_None;
+
+	for (int track = Track_Main; track < TRACKS_SIZE; track++)
+	{
+		gI_ZoneDisplayType[client][Zone_Stage][track] = hide ? ZoneDisplay_None : ZoneDisplay_Default;
+	}
+
+	HandleCustomZoneCookie(client);
+	Shavit_PrintToChat(client, "Stage zones: %s%s", gS_ChatStrings.sVariable, hide ? "hidden" : "shown");
+
+	return Plugin_Handled;
+}
+
 public Action Command_AddSpawn(int client, int args)
 {
 	if(!IsValidClient(client))
@@ -2681,9 +2705,17 @@ public int MenuHandler_SelectZoneTrack(Menu menu, MenuAction action, int param1,
 
 		for(int i = 0; i < ZONETYPES_SIZE; i++)
 		{
-			if(i == Zone_CustomSpawn)
+			if(i == Zone_CustomSpawn || i == Zone_Stage)
 			{
 				continue;
+			}
+
+			// Stage goes 5th, without changing its type id
+			if (submenu.ItemCount == 4)
+			{
+				GetZoneName(param1, Zone_Stage, sZoneName, sizeof(sZoneName));
+				IntToString(Zone_Stage, sInfo, 8);
+				submenu.AddItem(sInfo, sZoneName);
 			}
 
 			GetZoneName(param1, i, sZoneName, sizeof(sZoneName));
@@ -4976,7 +5008,8 @@ void DrawZone(float points[8][3], int color[4], float life, float width, bool fl
 				float eyes[3];
 				GetClientEyePosition(i, eyes);
 
-				if(gI_ZoneDisplayType[i][type][track] != ZoneDisplay_None &&
+				// zones a player hid still draw for them while they're placing one
+				if((gI_ZoneDisplayType[i][type][track] != ZoneDisplay_None || gI_MapStep[i] > 0) &&
 					(GetVectorDistance(eyes, center) <= 2048.0 ||
 					(TR_TraceRayFilter(eyes, center, MASK_PLAYERSOLID, RayType_EndPoint, TraceFilter_World) && !TR_DidHit())))
 				{
@@ -5433,32 +5466,7 @@ public void StartTouchPost(int entity, int other)
 
 		case Zone_Stage:
 		{
-			int num = gA_ZoneCache[zone].iData;
-			int iStyle = Shavit_GetBhopStyle(other);
-			bool bTASSegments = Shavit_GetStyleSettingBool(iStyle, "tas") || Shavit_GetStyleSettingBool(iStyle, "segments");
-
-			if (status == Timer_Running && Shavit_GetClientTrack(other) == track && (num > gI_LastStage[other] || bTASSegments || Shavit_IsPracticeMode(other)))
-			{
-				gI_LastStage[other] = num;
-				char sTime[32];
-				FormatSeconds(Shavit_GetClientTime(other), sTime, 32, true);
-
-				char sMessage[255];
-				FormatEx(sMessage, 255, "%T", "ZoneStageEnter", other, gS_ChatStrings.sText, gS_ChatStrings.sVariable2, num, gS_ChatStrings.sText, gS_ChatStrings.sVariable2, sTime, gS_ChatStrings.sText);
-
-				Action aResult = Plugin_Continue;
-				Call_StartForward(gH_Forwards_StageMessage);
-				Call_PushCell(other);
-				Call_PushCell(num);
-				Call_PushStringEx(sMessage, 255, SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
-				Call_PushCell(255);
-				Call_Finish(aResult);
-
-				if(aResult < Plugin_Handled)
-				{
-					Shavit_PrintToChat(other, "%s", sMessage);
-				}
-			}
+			EnterStage(other, zone, status);
 		}
 
 		case Zone_Speedmod:
@@ -5481,6 +5489,62 @@ public void StartTouchPost(int entity, int other)
 	Call_PushCell(entity);
 	Call_PushCell(gA_ZoneCache[zone].iData);
 	Call_Finish();
+}
+
+void EnterStage(int client, int zone, TimerStatus status)
+{
+	int num = gA_ZoneCache[zone].iData;
+	int track = gA_ZoneCache[zone].iTrack;
+	int iStyle = Shavit_GetBhopStyle(client);
+	bool bTASSegments = Shavit_GetStyleSettingBool(iStyle, "tas") || Shavit_GetStyleSettingBool(iStyle, "segments");
+
+	if (status == Timer_Running && Shavit_GetClientTrack(client) == track && (num > gI_LastStage[client] || bTASSegments || Shavit_IsPracticeMode(client)))
+	{
+		gI_LastStage[client] = num;
+		gI_StageEnterTick[client] = GetGameTickCount();
+
+		char sTime[32];
+		FormatSeconds(Shavit_GetClientTime(client), sTime, 32, true);
+
+		char sMessage[255];
+		FormatEx(sMessage, 255, "%T", "ZoneStageEnter", client, gS_ChatStrings.sText, gS_ChatStrings.sVariable2, num, gS_ChatStrings.sText, gS_ChatStrings.sVariable2, sTime, gS_ChatStrings.sText);
+
+		Action aResult = Plugin_Continue;
+		Call_StartForward(gH_Forwards_StageMessage);
+		Call_PushCell(client);
+		Call_PushCell(num);
+		Call_PushStringEx(sMessage, 255, SM_PARAM_STRING_COPY, SM_PARAM_COPYBACK);
+		Call_PushCell(255);
+		Call_Finish(aResult);
+
+		if(aResult < Plugin_Handled)
+		{
+			Shavit_PrintToChat(client, "%s", sMessage);
+		}
+	}
+}
+
+// A checkpoint saved inside a stage zone never re-touches it when teleported back to,
+// because the player is still touching it, so fire the stage for any zone they're in.
+public Action Shavit_OnTeleport(int client, int index, int target)
+{
+	if (gI_StageEnterTick[client] == GetGameTickCount())
+	{
+		return Plugin_Continue;
+	}
+
+	TimerStatus status = Shavit_GetTimerStatus(client);
+
+	for (int i = 0; i < gI_MapZones; i++)
+	{
+		if (gB_InsideZoneID[client][i] && gA_ZoneCache[i].iType == Zone_Stage)
+		{
+			EnterStage(client, i, status);
+			break;
+		}
+	}
+
+	return Plugin_Continue;
 }
 
 public Action SameTrack_StartTouch_er(int entity, int other)
